@@ -96,7 +96,7 @@ func (c *Client) newCall(ctx context.Context, conf *config.Config, log logger.Lo
 	tr := TransportFrom(sipConf.transport)
 	contact := c.ContactURI(tr)
 	if sipConf.host == "" {
-		sipConf.host = contact.GetHost()
+		sipConf.host = sipConf.address
 	}
 	call := &outboundCall{
 		c:         c,
