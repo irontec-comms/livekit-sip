@@ -135,3 +135,5 @@ require (
 	google.golang.org/grpc v1.72.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/livekit/protocol => github.com/irontec-comms/livekit-protocol v0.0.0-20250702064126-fe25da0f9c93

@@ -81,6 +81,24 @@ func (h TestHandler) DeregisterTransferSIPParticipantTopic(sipCallId string) {
 	// no-op
 }
 
+func (h TestHandler) RegisterHoldSIPParticipantTopic(sipCallId string) error {
+	// no-op
+	return nil
+}
+
+func (h TestHandler) DeregisterHoldSIPParticipantTopic(sipCallId string) {
+	// no-op
+}
+
+func (h TestHandler) RegisterUnholdSIPParticipantTopic(sipCallId string) error {
+	// no-op
+	return nil
+}
+
+func (h TestHandler) DeregisterUnholdSIPParticipantTopic(sipCallId string) {
+	// no-op
+}
+
 func (h TestHandler) OnCallEnd(ctx context.Context, callInfo *livekit.SIPCallInfo, reason string) {
 	if h.OnCallEndFunc != nil {
 		h.OnCallEndFunc(ctx, callInfo, reason)
