@@ -1093,6 +1093,12 @@ func (c *sipOutbound) holdCall(ctx context.Context) error {
 		return &livekit.SIPStatus{Code: livekit.SIPStatusCode(resp.StatusCode)}
 	}
 
+	// Send ACK for the hold INVITE
+	ack := sip.NewAckRequest(req, resp, nil)
+	if err := c.WriteRequest(ack); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1161,6 +1167,12 @@ func (c *sipOutbound) unholdCall(ctx context.Context) error {
 
 	if resp.StatusCode != sip.StatusOK {
 		return &livekit.SIPStatus{Code: livekit.SIPStatusCode(resp.StatusCode)}
+	}
+
+	// Send ACK for the unhold INVITE
+	ack := sip.NewAckRequest(req, resp, nil)
+	if err := c.WriteRequest(ack); err != nil {
+		return err
 	}
 
 	return nil
