@@ -1037,9 +1037,19 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 func (c *inboundCall) holdCall(ctx context.Context) error {
 	c.log.Infow("holding inbound call")
 
+	// Disable media timeout during hold to prevent call termination
+	if c.media != nil {
+		c.media.EnableTimeout(false)
+		c.log.Infow("media timeout disabled for hold")
+	}
+
 	err := c.cc.holdCall(ctx)
 	if err != nil {
 		c.log.Infow("inbound call failed to hold", "error", err)
+		// Re-enable timeout if hold failed
+		if c.media != nil {
+			c.media.EnableTimeout(true)
+		}
 		return err
 	}
 
@@ -1054,6 +1064,12 @@ func (c *inboundCall) unholdCall(ctx context.Context) error {
 	if err != nil {
 		c.log.Infow("inbound call failed to unhold", "error", err)
 		return err
+	}
+
+	// Re-enable media timeout after unhold
+	if c.media != nil {
+		c.media.EnableTimeout(true)
+		c.log.Infow("media timeout re-enabled after unhold")
 	}
 
 	c.log.Infow("inbound call unheld")
