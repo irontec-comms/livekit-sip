@@ -15,7 +15,6 @@
 package sip
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -1082,13 +1081,15 @@ func (c *sipOutbound) holdCall(ctx context.Context) error {
 			req.AppendHeader(h)
 		}
 	}
-
-	// Modify SDP to set direction to sendonly (hold)
+	// Modify SDP to set direction to sendrecv (hold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Replace a=sendrecv with a=sendonly for hold
-		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendrecv"), []byte("a=sendonly"))
-		req.SetBody(sdpOffer)
+		// Parse SDP and modify direction attributes properly
+		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendonly")
+		if err != nil {
+			return err
+		}
+		req.SetBody(modifiedSDP)
 	}
 
 	c.mu.Unlock()
@@ -1162,9 +1163,12 @@ func (c *sipOutbound) unholdCall(ctx context.Context) error {
 	// Modify SDP to set direction to sendrecv (unhold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Replace a=sendonly with a=sendrecv for unhold
-		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendonly"), []byte("a=sendrecv"))
-		req.SetBody(sdpOffer)
+		// Parse SDP and modify direction attributes properly
+		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendonly")
+		if err != nil {
+			return err
+		}
+		req.SetBody(modifiedSDP)
 	}
 
 	c.mu.Unlock()
