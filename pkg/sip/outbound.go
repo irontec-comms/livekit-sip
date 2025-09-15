@@ -1088,6 +1088,8 @@ func (c *sipOutbound) holdCall(ctx context.Context) error {
 	if len(sdpOffer) > 0 {
 		// Replace a=sendrecv with a=sendonly for hold
 		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendrecv"), []byte("a=sendonly"))
+		// Increment session version in o= attribute
+		sdpOffer = incrementSDPSessionVersion(sdpOffer)
 		req.SetBody(sdpOffer)
 	}
 
@@ -1164,6 +1166,8 @@ func (c *sipOutbound) unholdCall(ctx context.Context) error {
 	if len(sdpOffer) > 0 {
 		// Replace a=sendonly with a=sendrecv for unhold
 		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendonly"), []byte("a=sendrecv"))
+		// Increment session version in o= attribute
+		sdpOffer = incrementSDPSessionVersion(sdpOffer)
 		req.SetBody(sdpOffer)
 	}
 

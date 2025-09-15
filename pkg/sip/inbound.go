@@ -21,7 +21,9 @@ import (
 	"log/slog"
 	"math"
 	"net/netip"
+	"regexp"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,6 +57,44 @@ const (
 	// This is done because of audio cutoff at the beginning of calls observed in the wild.
 	audioBridgeMaxDelay = 1 * time.Second
 )
+
+// incrementSDPSessionVersion increments the session version in the o= line of SDP
+// The o= line format is: o=<username> <sess-id> <sess-version> <nettype> <addrtype> <unicast-address>
+func incrementSDPSessionVersion(sdpData []byte) []byte {
+	// Regex to match the o= line and capture the session version
+	re := regexp.MustCompile(`^o=([^\s]+)\s+([^\s]+)\s+(\d+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)$`)
+
+	lines := bytes.Split(sdpData, []byte("\n"))
+	for i, line := range lines {
+		if bytes.HasPrefix(line, []byte("o=")) {
+			matches := re.FindSubmatch(line)
+			if len(matches) == 7 {
+				// Parse the current session version
+				currentVersion, err := strconv.ParseUint(string(matches[3]), 10, 64)
+				if err != nil {
+					continue
+				}
+
+				// Increment the session version
+				newVersion := currentVersion + 1
+
+				// Reconstruct the o= line with incremented version
+				newLine := fmt.Sprintf("o=%s %s %d %s %s %s",
+					string(matches[1]), // username
+					string(matches[2]), // sess-id
+					newVersion,         // incremented sess-version
+					string(matches[4]), // nettype
+					string(matches[5]), // addrtype
+					string(matches[6])) // unicast-address
+
+				lines[i] = []byte(newLine)
+				break
+			}
+		}
+	}
+
+	return bytes.Join(lines, []byte("\n"))
+}
 
 func (s *Server) getInvite(from string) *inProgressInvite {
 	s.imu.Lock()
@@ -1574,6 +1614,8 @@ func (c *sipInbound) holdCall(ctx context.Context) error {
 	if len(sdpOffer) > 0 {
 		// Replace a=sendrecv with a=sendonly for hold
 		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendrecv"), []byte("a=sendonly"))
+		// Increment session version in o= attribute
+		sdpOffer = incrementSDPSessionVersion(sdpOffer)
 		req.SetBody(sdpOffer)
 	}
 
@@ -1646,6 +1688,8 @@ func (c *sipInbound) unholdCall(ctx context.Context) error {
 	if len(sdpOffer) > 0 {
 		// Replace a=sendonly with a=sendrecv for unhold
 		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendonly"), []byte("a=sendrecv"))
+		// Increment session version in o= attribute
+		sdpOffer = incrementSDPSessionVersion(sdpOffer)
 		req.SetBody(sdpOffer)
 	}
 
