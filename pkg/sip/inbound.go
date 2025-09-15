@@ -15,7 +15,6 @@
 package sip
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -44,6 +43,7 @@ import (
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sipgo/sip"
+	pionsdp "github.com/pion/sdp/v3"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
@@ -55,6 +55,56 @@ const (
 	// This is done because of audio cutoff at the beginning of calls observed in the wild.
 	audioBridgeMaxDelay = 1 * time.Second
 )
+
+// modifySDPDirection parses SDP and modifies the direction attributes
+// from sendrecv to sendonly (for hold) or from sendonly to sendrecv (for unhold)
+func modifySDPDirection(sdpData []byte, direction string) ([]byte, error) {
+	if len(sdpData) == 0 {
+		return sdpData, nil
+	}
+
+	// Parse SDP using the base Parse function (works for both offers and answers)
+	desc, err := sdp.Parse(sdpData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SDP: %w", err)
+	}
+
+	// Modify direction attributes in each media description
+	for _, mediaDesc := range desc.SDP.MediaDescriptions {
+		if mediaDesc == nil {
+			continue
+		}
+
+		// Find and remove existing direction attributes
+		var newAttributes []pionsdp.Attribute
+		for _, attr := range mediaDesc.Attributes {
+			// Keep all attributes except direction-related ones
+			if attr.Key != "sendrecv" && attr.Key != "sendonly" &&
+				attr.Key != "recvonly" && attr.Key != "inactive" {
+				newAttributes = append(newAttributes, attr)
+			}
+		}
+
+		// Add the new direction attribute
+		newAttributes = append(newAttributes, pionsdp.Attribute{
+			Key:   direction,
+			Value: "",
+		})
+
+		mediaDesc.Attributes = newAttributes
+	}
+
+	// Increment session version
+	desc.SDP.Origin.SessionVersion++
+
+	// Marshal back to bytes
+	modifiedSDP, err := desc.SDP.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal modified SDP: %w", err)
+	}
+
+	return modifiedSDP, nil
+}
 
 func (s *Server) getInvite(from string) *inProgressInvite {
 	s.imu.Lock()
@@ -1572,9 +1622,12 @@ func (c *sipInbound) holdCall(ctx context.Context) error {
 	// Modify SDP to set direction to sendonly (hold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Replace a=sendrecv with a=sendonly for hold
-		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendrecv"), []byte("a=sendonly"))
-		req.SetBody(sdpOffer)
+		// Parse SDP and modify direction attributes properly
+		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendonly")
+		if err != nil {
+			return err
+		}
+		req.SetBody(modifiedSDP)
 	}
 
 	c.swapSrcDst(req)
@@ -1644,9 +1697,12 @@ func (c *sipInbound) unholdCall(ctx context.Context) error {
 	// Modify SDP to set direction to sendrecv (unhold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Replace a=sendonly with a=sendrecv for unhold
-		sdpOffer = bytes.ReplaceAll(sdpOffer, []byte("a=sendonly"), []byte("a=sendrecv"))
-		req.SetBody(sdpOffer)
+		// Parse SDP and modify direction attributes properly
+		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendrecv")
+		if err != nil {
+			return err
+		}
+		req.SetBody(modifiedSDP)
 	}
 
 	c.swapSrcDst(req)
