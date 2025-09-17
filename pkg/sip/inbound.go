@@ -94,8 +94,8 @@ func modifySDPDirection(sdpData []byte, direction string) ([]byte, error) {
 		mediaDesc.Attributes = newAttributes
 	}
 
-	// Increment session version
-	desc.SDP.Origin.SessionVersion++
+	// Set session version to current value plus current unix timestamp
+	desc.SDP.Origin.SessionVersion += uint64(time.Now().Unix())
 
 	// Marshal back to bytes
 	modifiedSDP, err := desc.SDP.Marshal()
