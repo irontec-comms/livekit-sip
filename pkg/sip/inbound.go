@@ -1716,7 +1716,7 @@ func (c *sipInbound) unholdCall(ctx context.Context) error {
 	// Modify SDP to set direction to sendrecv (unhold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		modifiedSDP, err := c.setMediaDirection(sdpOffer, "sendonly")
+		modifiedSDP, err := c.setMediaDirection(sdpOffer, "sendrecv")
 		if err != nil {
 			return err
 		}
