@@ -30,6 +30,7 @@ import (
 
 	"github.com/frostbyte73/core"
 	"github.com/icholy/digest"
+	psdp "github.com/pion/sdp/v3"
 	"github.com/pkg/errors"
 
 	"github.com/livekit/media-sdk/dtmf"
@@ -43,7 +44,6 @@ import (
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/livekit/sipgo/sip"
-	pionsdp "github.com/pion/sdp/v3"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
@@ -76,7 +76,7 @@ func modifySDPDirection(sdpData []byte, direction string) ([]byte, error) {
 		}
 
 		// Find and remove existing direction attributes
-		var newAttributes []pionsdp.Attribute
+		var newAttributes []psdp.Attribute
 		for _, attr := range mediaDesc.Attributes {
 			// Keep all attributes except direction-related ones
 			if attr.Key != "sendrecv" && attr.Key != "sendonly" &&
@@ -86,7 +86,7 @@ func modifySDPDirection(sdpData []byte, direction string) ([]byte, error) {
 		}
 
 		// Add the new direction attribute
-		newAttributes = append(newAttributes, pionsdp.Attribute{
+		newAttributes = append(newAttributes, psdp.Attribute{
 			Key:   direction,
 			Value: "",
 		})
@@ -695,6 +695,7 @@ func (c *inboundCall) runMediaConn(offerData []byte, enc livekit.SIPMediaEncrypt
 	if err != nil {
 		return nil, err
 	}
+	c.cc.nextSDPVersion = answer.SDP.Origin.SessionVersion + 1
 	c.mon.SDPSize(len(answerData), false)
 	c.log.Debugw("SDP answer", "sdp", string(answerData))
 
@@ -1172,6 +1173,7 @@ type sipInbound struct {
 	referCseq       uint32
 	ringing         chan struct{}
 	setHeaders      setHeadersFunc
+	nextSDPVersion  uint64
 }
 
 func (c *sipInbound) ValidateInvite() error {
@@ -1583,6 +1585,56 @@ func (c *sipInbound) CloseWithStatus(code sip.StatusCode, status string) {
 	}
 }
 
+func (c *sipInbound) setMediaDirection(sdpData []byte, direction string) ([]byte, error) {
+
+	if len(sdpData) == 0 {
+		return sdpData, nil
+	}
+
+	// Parse SDP using the base Parse function (works for both offers and answers)
+	desc, err := sdp.Parse(sdpData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SDP: %w", err)
+	}
+
+	// Modify direction attributes in each media description
+	for _, mediaDesc := range desc.SDP.MediaDescriptions {
+		if mediaDesc == nil {
+			continue
+		}
+
+		// Find and remove existing direction attributes
+		var newAttributes []psdp.Attribute
+		for _, attr := range mediaDesc.Attributes {
+			// Keep all attributes except direction-related ones
+			if attr.Key != "sendrecv" && attr.Key != "sendonly" &&
+				attr.Key != "recvonly" && attr.Key != "inactive" {
+				newAttributes = append(newAttributes, attr)
+			}
+		}
+
+		// Add the new direction attribute
+		newAttributes = append(newAttributes, psdp.Attribute{
+			Key:   direction,
+			Value: "",
+		})
+
+		mediaDesc.Attributes = newAttributes
+	}
+
+	// Set session version to current value plus current unix timestamp
+	desc.SDP.Origin.SessionVersion = c.nextSDPVersion
+	c.nextSDPVersion += 1
+
+	// Marshal back to bytes
+	modifiedSDP, err := desc.SDP.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal modified SDP: %w", err)
+	}
+
+	return modifiedSDP, nil
+}
+
 func (c *sipInbound) holdCall(ctx context.Context) error {
 	c.mu.Lock()
 
@@ -1603,27 +1655,10 @@ func (c *sipInbound) holdCall(ctx context.Context) error {
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
 
-	// Copy Route headers from original INVITE or Record-Route from response
-	if len(c.invite.GetHeaders("Route")) > 0 {
-		sip.CopyHeaders("Route", c.invite, req)
-	} else {
-		hdrs := c.inviteOk.GetHeaders("Record-Route")
-		for i := len(hdrs) - 1; i >= 0; i-- {
-			rrh, ok := hdrs[i].(*sip.RecordRouteHeader)
-			if !ok {
-				continue
-			}
-
-			h := rrh.Clone()
-			req.AppendHeader(h)
-		}
-	}
-
 	// Modify SDP to set direction to sendonly (hold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Parse SDP and modify direction attributes properly
-		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendonly")
+		modifiedSDP, err := c.setMediaDirection(sdpOffer, "sendonly")
 		if err != nil {
 			return err
 		}
@@ -1678,27 +1713,10 @@ func (c *sipInbound) unholdCall(ctx context.Context) error {
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	req.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, CANCEL, BYE, NOTIFY, REFER, MESSAGE, OPTIONS, INFO, SUBSCRIBE"))
 
-	// Copy Route headers from original INVITE or Record-Route from response
-	if len(c.invite.GetHeaders("Route")) > 0 {
-		sip.CopyHeaders("Route", c.invite, req)
-	} else {
-		hdrs := c.inviteOk.GetHeaders("Record-Route")
-		for i := len(hdrs) - 1; i >= 0; i-- {
-			rrh, ok := hdrs[i].(*sip.RecordRouteHeader)
-			if !ok {
-				continue
-			}
-
-			h := rrh.Clone()
-			req.AppendHeader(h)
-		}
-	}
-
 	// Modify SDP to set direction to sendrecv (unhold)
 	sdpOffer := c.inviteOk.Body()
 	if len(sdpOffer) > 0 {
-		// Parse SDP and modify direction attributes properly
-		modifiedSDP, err := modifySDPDirection(sdpOffer, "sendrecv")
+		modifiedSDP, err := c.setMediaDirection(sdpOffer, "sendonly")
 		if err != nil {
 			return err
 		}
